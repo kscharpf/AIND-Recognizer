@@ -1,4 +1,5 @@
 import warnings
+import sys
 from asl_data import SinglesData
 
 
@@ -20,6 +21,21 @@ def recognize(models: dict, test_set: SinglesData):
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     probabilities = []
     guesses = []
-    # TODO implement the recognizer
-    # return probabilities, guesses
-    raise NotImplementedError
+    pidx = 0
+    for word_id in range(0, len(test_set.get_all_sequences())):
+        X, lengths = test_set.get_item_Xlengths(word_id)
+        maxScore = float("-inf")
+        bestWord = ""
+        probabilities.append(dict())
+        for w,m in models.items():
+            try:
+                logL = m.score(X, lengths)
+                if logL > maxScore:
+                    maxScore = logL
+                    bestWord = w
+                probabilities[pidx][w] = logL
+            except:
+                pass
+        guesses.append(bestWord)
+        pidx+=1
+    return probabilities,guesses

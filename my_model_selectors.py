@@ -75,12 +75,44 @@ class SelectorBIC(ModelSelector):
         :return: GaussianHMM object
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        best_model = None
+        best_score = float("inf")
+        for n_states in range(self.min_n_components, self.max_n_components+1):
+            try:
+               m = self.base_model(n_states)
+               logL = m.score(self.X,self.lengths)
 
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+               # how many parameters
+               # Each state has a transition probability to every other state (the A matrix) : n_states**2
+               # Each state has a distribution for each output symbol (B): n_states * number of symbols
+               # since X is many samples then the number of symbols would be the size of the row
+               # Each state has an initial distribution (pi) for each emission
+               numparam = n_states*n_states + n_states*len(self.X[0]) + n_states*len(self.X[0])
+               bic = -2*logL + numparam * np.log(len(self.X))
+               if bic < best_score:
+                   best_model = m
+                   best_score = bic
+            except:
+                pass
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
+    def __init__(self, all_word_sequences: dict, all_word_Xlengths: dict, this_word: str,
+                 n_constant=3,
+                 min_n_components=2, max_n_components=10,
+                 random_state=14, verbose=False):
+        ModelSelector.__init__(self, all_word_sequences, 
+                                         all_word_Xlengths, 
+                                         this_word,
+                                         n_constant,
+                                         min_n_components,
+                                         max_n_components,
+                                         random_state,
+                                         verbose)
+        self.dic_results = {}
+
     ''' select best model based on Discriminative Information Criterion
 
     Biem, Alain. "A model selection criterion for classification: Application to hmm topology optimization."
@@ -91,9 +123,39 @@ class SelectorDIC(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        best_model = None
+        best_score = float("-inf")
+        for n_states in range(self.min_n_components, self.max_n_components+1):
+            try:
+               m = self.base_model(n_states)
+               logL = m.score(self.X,self.lengths)
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+               s = 0.
+               nw = 0
+               for w in self.words:
+                   try:
+                       if w != self.this_word:
+                           if w not in self.dic_results: 
+                               tx,tlen = self.hwords[w]
+                               hmm_model = GaussianHMM(n_components=n_states, 
+                                                       covariance_type="diag", 
+                                                           n_iter=1000,
+                                                       random_state=self.random_state, 
+                                                       verbose=False).fit(tx, tlen)
+                               self.dic_results[w] = hmm_model.score(tx,tlen)
+                           s += self.dic_results[w]
+                           nw += 1
+                   except:
+                       pass
+
+               dic = logL - s/nw
+               if dic > best_score:
+                   best_model = m
+                   best_score = dic
+            except:
+                pass
+
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -105,4 +167,30 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        raise NotImplementedError
+        kf = KFold(n_splits=min(len(self.lengths),2))
+        best_score = float("-inf")
+        best_model = None
+        best_num_components = 0
+        for n_states in range(self.min_n_components, self.max_n_components+1):
+            s_score = 0
+            split_cnt = 0
+            for train, test in kf.split(self.sequences):
+                split_cnt += 1
+                try: 
+                    X_train,X_train_lengths = combine_sequences(train, self.sequences)
+                    X_test,X_test_lengths = combine_sequences(test, self.sequences)
+                    hmm_model = GaussianHMM(n_components=n_states, covariance_type="diag", n_iter=1000,
+                                    random_state=self.random_state, verbose=False)
+                    hmm_model.fit(X_train, X_train_lengths)
+                    s_score += hmm_model.score(X_test, X_test_lengths)
+                except:
+                    pass
+            if (s_score / split_cnt) > best_score:
+                best_score = s_score / split_cnt
+                best_num_components = n_states
+
+        best_model = GaussianHMM(n_components=best_num_components, covariance_type="diag", n_iter=1000,
+                        random_state=self.random_state, verbose=False)
+        best_model.fit(self.X, self.lengths)
+
+        return best_model
